@@ -1,0 +1,990 @@
+---
+title: "Genre Classification"
+author: "Jake Smith"
+output: pdf_document
+latex_engine: xelatex
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval = FALSE, message = FALSE, warning = FALSE, dpi = 400)
+set.seed(56498431)
+
+# import required libraries
+require(knitr)
+require(kableExtra)
+require(dplyr)
+require(tidyr)
+require(ggplot2)
+require(corrplot)
+require(keras)
+
+# import the complete dataset
+music <- read.csv("Objects/final music descriptors.csv")
+```
+
+## Introduction
+
+Musical genres are a commonly used tool for music organization and discovery. The genre assigned to any given piece of music is an amalgamation of information derived not just from the musical content but also year of release, relationship to contemporary pieces, origin of the composing artist, and other external factors. Classification of a given song into the appropriate musical genre in the absence of these external factors therefore represents a challenging computational problem.
+
+Several approaches to this challenge have been previously reported. Amongst others, Silla *et al* achieved classification accuracies of ~60% on the Latin Music Database (Silla *et al*, ISMIR 2008, "The Latin Music Database", 451-456) using descriptors calculated on the frequency spectrum (Silla *et al*, *J. Braz. Comput. Soc.* **2008** 14, 7-18). Li *et al* achieved classification accuracies of ~75% on a subset of the GTZAN Genre Collection (Marsyas “Data Sets”. Tzanetakis and Cook, *GTZAN Genre Collection*, http://marsyas.info/downloads/datasets.html) using Mel-frequency cepstral coefficients, which reduce time waves to a vector of scalars representing a number of distinct tonal ranges (Li *et al*, sxue 2018. "Combining CNN and Classical Algorithms for Music Genre Classification"). Finally, Banitalebi-Dehkordi and Banitalebi-Dehkordi achieved classification accuracies of >90% on the complete GTZAN Genre Collection using novel waveform descriptors (Banitalebi-Dehkordi and Banitalebi-Dehkordi, *J. Sign. Process Syst.* **2014** 74, 273-280).
+
+In this work, four distinct models will be trained and tested for genre classification using predominantly descriptors calculated on the frequency spectrum. The dataset employed is a personal music collection of 21,292 individual pieces grouped into ten broad musical genres. The distribution of genre predictions will be evaluated across models alongside flat classification performance.
+
+## Composition of Dataset
+
+The dataset for this analysis was generated from a collection of 21,292 audio files containing music and labeled with an aritst name, album title, song title, year of release, and musical genre. From this metadata, two identifying features were produced:
+
+* Identifying Features
+  + *song* - the song name in the format "title - artist"
+  + *album* - the album name in the format "title - artist - year"
+
+```{r genres barplot, echo = FALSE, eval = TRUE, fig.height = 2.8}
+# generate a barplot of the genre distribution in the dataset
+ggplot(music) + geom_bar(aes(x = genre)) + ggtitle("Distribution of Genres") + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 11))
+```
+
+The collection of songs was initially classified into 80 unique subgenres. These were combined into ten broader genres, distributed as shown. The complete dataset was divided randomly into a training set, comprising 14904 observations (70%), and test set, comprising 6388 observations (30%).
+
+### Preparation of Descriptive Features
+
+Given each song, silence was removed and the remaining length in seconds recorded. A ten-second segment was selected from the middle of the song and divided into ten one-second portions, then descriptive features were calculated on both the time wave and frequency spectrum using functions from the *seeWave* and *tuneR* packages. For songs whose length did not exceed ten seconds, the entire song was used.
+
+* Time Wave Features
+  + *length* – the length in seconds of the complete audio file with silence removed
+  + *roughness* – the integrated second derivative
+  + *zero-crossing rate* – the average rate at which the wave changes sign
+
+* Frequency Spectrum Features
+  + *25th quantile* – the 25th quantile
+  + *75th quantile* – the 75th quantile
+  + *centroid* – the mean weighted by amplitude
+  + *skewness* – the degree of skew
+  + *kurtosis* – the degree of peakedness
+  + *flatness* – a measure of tonality calculated as the ratio of the geometric and arithmetic means
+  + *entropy* – a measure of complexity calculated as the Shannon entropy
+
+A set of secondary features respresenting the magnitude of change between one-second portions was derived from each descriptive feature other than length according to the formula $\Delta x_{i} =|x_{i+1} - x_i|$. Finally, each feature was power or log-transformed as necessary to alleviate skew. The final dataset was thus comprised of 191 features, 2 ID columns, and the target.
+
+```{r, echo = FALSE, eval = TRUE, fig.height = 4.3}
+load("Objects/feature.histograms")
+feature.histograms
+```
+
+## Model Selection
+
+Four classification strategies were screened using validation statistics for comparison on the training dataset: multinomial logistic regression with elastic net regularization, k-nearest neighbors, random forest, and a feedforward neural network. Initially, an inverse-prevalence weighted classification score was used for evaluation of model performance in order to accomodate the relatively scarce representation of the classical and electronic genres in the dataset. Unfortunately, model performance was quite poor even on the larger genres, and thus higher inverse-prevalence weighted classification scores could be generated by prediting an identical, lesser represented genre for all observations. To avoid these undesireable energy minima, flat classification accuracy was ultimately used to evaluate model performance.
+
+Amongst the four strategies tested, random forest classification produced the highest classification accuracy of 35%, while k-Nearest neighbors classification was the worst performing method. For all of the models, the validation accuracy observed during tuning aligned well with ability to classify the test set.
+
+|Method|Validation Accuracy|Validation Method|Test Set Accuracy|
+|-------|-------|--------|--------|
+|multinomial regression|0.312|ten-fold cross-validation|0.323|
+|k-nearest neighbors|0.291|LOO cross-validation|0.286|
+|random forest|0.351|out-of-bag accuracy|0.354|
+|neural network|0.333|80/20 validation split|0.334|
+
+### Multinomial Logistic Regression
+
+A multinomial logistic regression model with elasticnet regularization was trained using ten-fold cross-validation. The regularization penalty parameter $\lambda$ and the elasticnet mixing parameter $\alpha$ were tuned through a grid optimization over the range $-20 < log_e(\lambda) < 5$ and $0 < \alpha < 1$. The optimal parameters were selected as those with the highest regularization penalty $\lambda$ given a classification score within one standard error of the maximal.
+
+```{r, echo = FALSE, eval = TRUE, fig.height= 4.1}
+load("Objects/lasso.tuning.heatmap")
+lasso.tuning.heatmap + ggtitle("Multinomial Logistic Regression Tuning Parameters")
+```
+
+A final model was trained with the optimized parameters of $\lambda = 7e^{-7}$ and $\alpha = 0.3$ and the resulting model used to predict musical genres for the test set. Classification accuracy on the test set data was 0.323, in line with the cross-validation accuracy of 0.312.
+
+```{r, echo = FALSE, eval = TRUE}
+load("Objects/lasso.cm")
+kable(lasso.cm, caption = "Confusion Matrix - Multinomial Regression - Test Set") %>% kable_styling(latex_options = "scale_down")
+```
+
+### k-Nearest Neighbors Classification
+
+A k-nearest neighbors classification model was trained using leave-one-out cross-validation. The neighbors parameter $k$, the Minkowski distance parameter $\rho$, and the weighting kernel were tuned through a grid optimization over the range $1 < k < 21$ and $0.25 < \rho < 10$. The optimal parameters were selected as those with the highest neighbors parameter $k$ given a classification score within one standard error of the maximal.
+
+```{r, echo = FALSE, eval = TRUE}
+load("Objects/knn.tuning.parameters")
+knn.tuning.parameters + ggtitle("k-Nearest Neighbors Tuning Parameters", "Faceted by Minkowski Distance Parameter") + 
+  theme(axis.text.y = element_text(size = 6))
+```
+
+A final model was trained with the optimized parameters of $k = 21$, $\rho = 0.5$, and an Epanechnikov kernel, and the resulting model was used to predict musical genres for the test set. Classification accuracy on the test set data was 0.286, in line with the cross-validation accuracy of 0.291.
+
+```{r, echo = FALSE, eval = TRUE}
+load("Objects/knn.cm")
+kable(knn.cm, caption = "Confusion Matrix - k-Nearest Neighbors - Test Set") %>% kable_styling(latex_options = "scale_down")
+```
+
+### Random Forest
+
+A random forest was trained using out-of-bag results for cross-validation. The number of features per tree $m$ and minimum number of nodes per tree were tuned with a forest of 600 trees through a grid optimization over the range $20 < m < 180$ and $1 < nodes < 100$. The optimal parameters were selected as those with the fewest features per tree given a classification score within one standard error of the maximal.
+
+```{r, echo = FALSE, eval = TRUE}
+load("Objects/rf.tuning.plot")
+rf.tuning.plot + ggtitle("Random Forest Tuning Parameters")
+```
+
+A final forest of 2000 trees was trained with the optimized parameters of $m = 70$ and a minima of 31 nodes per tree, and the resulting model was used to predict musical genres for the test set. Classification accuracy on the test set data was 0.354, in line with the cross-validation accuracy of 0.351.
+
+```{r, echo = FALSE, eval = TRUE}
+load("Objects/rf.cm")
+kable(rf.cm, caption = "Confusion Matrix - Random Forest - Test Set") %>% kable_styling(latex_options = "scale_down")
+```
+
+### Feedforward Neural Network
+
+A feedforward fully-connected neural network was trained using an 80/20 train/validation split of the test set. A categorical entropy loss function and flat classification accuracy success metric were employed. The number of hidden layers, nodes per layer, dropout rate, training batch size, and number of training epochs were tuned by sequential guess-and-check iterations. The optimal parameters were selected as those with the highest validation classification accuracy.
+
+| Layer | Nodes | Dropout Rate|
+|-------|-------|-------------|
+|Input|191||
+|Fully-Connected|50||
+|Dropout||50%|
+|Fully-Connected|50||
+|Dropout||50%|
+|Output|11||
+
+The tuned model was trained for 80 epochs in 250 observation batches and used to predict musical genres for the test set. Classification accuracy on the test set data was 0.334, in line with the cross-validation accuracy of 0.333.
+
+```{r, echo = FALSE, eval = TRUE}
+load("Objects/nnet.training")
+plot(nnet.training) + ggtitle("Optimized Neural Network Training Curves")
+```
+
+```{r, echo = FALSE, eval = TRUE}
+load("Objects/nnet.cm")
+kable(nnet.cm, caption = "Confusion Matrix - Neural Network - Test Set") %>% kable_styling(latex_options = "scale_down")
+```
+
+## Discussion
+
+The most distinctive musical genres - hip-hop, classical, and, to a lesser degree, punk - were also those classified most accurately, while distinguishing amongst the pop/rock family - alternative rock, indie rock, metal, pop, progressive rock, and rock - proved more difficult. The electronic genre was predictably significantly underpredicted by all models, given the lack of effort to adjust for its relative scarcity in the dataset.
+
+```{r predicted versus observed heatmaps, fig.width = 8, fig.height = 7, echo = FALSE, eval = TRUE}
+# build dataframes for plotting from the confusion matrix objects
+# create a column of fraction predicted
+lasso.cm.df <- as.data.frame(lasso.cm) %>% group_by(Var2) %>% mutate(Fraction = Freq/colSums(lasso.cm))
+knn.cm.df <- as.data.frame(knn.cm) %>% group_by(Var2) %>% mutate(Fraction = Freq/colSums(knn.cm))
+rf.cm.df <- as.data.frame(rf.cm) %>% group_by(Var2) %>% mutate(Fraction = Freq/colSums(rf.cm))
+nnet.cm.df <- as.data.frame(nnet.cm) %>% group_by(Var2) %>% mutate(Fraction = Freq/colSums(nnet.cm))
+
+# generate predicted versus observed heatmaps for the four models
+lasso.cm.plot <- ggplot(lasso.cm.df) + geom_raster(aes(x = glm.predictions, y = Var2, fill = Fraction)) + 
+  scale_fill_gradient("Fraction\nPredicted", limits = c(0, 0.8), low = "white", high = "blue") + 
+  xlab("predicted") + ylab("observed") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("Multinomial Regression")
+
+knn.cm.plot <- ggplot(knn.cm.df) + geom_raster(aes(x = knn.predictions, y = Var2, fill = Fraction)) + 
+  scale_fill_gradient("Fraction\nPredicted", limits = c(0, 0.8), low = "white", high = "blue") + 
+  xlab("predicted") + ylab("observed") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("k-Nearest Neighbors")
+
+rf.cm.plot <- ggplot(rf.cm.df) + geom_raster(aes(x = rf.predictions, y = Var2, fill = Fraction)) + 
+  scale_fill_gradient("Fraction\nPredicted", limits = c(0, 0.8), low = "white", high = "blue") + 
+  xlab("predicted") + ylab("observed") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("Random Forest")
+
+nnet.cm.plot <- ggplot(nnet.cm.df) + geom_raster(aes(x = Var1, y = Var2, fill = Fraction)) + 
+  scale_fill_gradient("Fraction\nPredicted", limits = c(0, 0.8), low = "white", high = "blue") + 
+  xlab("predicted") + ylab("observed") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggtitle("Neural Network")
+
+# place heatmaps into a grid
+grid <- cowplot::plot_grid(lasso.cm.plot, knn.cm.plot, rf.cm.plot, nnet.cm.plot)
+
+# add a shared title
+title <- cowplot::ggdraw() + cowplot::draw_label("Fraction of Predictions for Observed Classes", fontface = "bold")
+cowplot::plot_grid(title, grid, ncol = 1, rel_heights = c(0.1, 1))
+```
+
+Visually inspecting the separation of genres in a two-dimensional feature space representing approximately 80% of the total variance reveals the source of these trends. The hip-hop and classical genres generally cluster to opposite sides of the distribution, leaving a clump of unresolved pop/rock genres in the middle. Combined with the relatively poor results obtained from all four classification models, we would hypothesize this lack of distinction in the feature space indicates that the descriptors calculated on raw audio files do not adequately capture song-to-song variance.
+
+```{r, echo = FALSE, eval = TRUE, fig.height = 3.5}
+# load the transformed training set
+load("Objects/final.train.set")
+
+# generate principle components from the training set
+pca <- prcomp(select(final.train.set, -genre, -song, -album), center = TRUE, scale = TRUE)
+
+# plot the distribution of genres as a function of principle components 1 & 2
+ggplot() + geom_point(aes(x = pca$x[, 1], y = pca$x[, 2], col = final.train.set$genre)) + 
+  ggtitle("Genre Distribution in Two-Dimensional Feature Space") + scale_color_discrete("Genre") +
+  xlab("first principle component") + ylab("second principle component")
+```
+
+A plot of the correlation between each of the features showed consistently high levels of correlation across the ten one-second periods for nearly all of the calculated descriptive features. It is unclear whether this is the result of periods not long enough to capture changes over the course of a musical piece or periods so long that they effectively averaging those changes out. A multinomial logistic regression model fit with a single time point and the difference features removed was less effective than the all-inclusive model presented above, indicating that these additional time points do contain relevant information. We may hypothesize that the use of more information-rich descriptors as features would further improve classification performance.
+
+```{r, echo = FALSE, eval = TRUE, fig.height = 4}
+corrplot(cor(select(final.train.set, -song, -album, -genre)), method = "color", tl.pos = "n", title = "Feature Correlation Matrix", mar = c(1, 1, 1, 1))
+```
+
+# Conclusion
+
+Ultimately, our efforts produced a classification model for musical genres using features derived from only spectrographic descriptors that was effective at identifying classical and hip-hop pieces but was much less successful at discerning the pop and rock-derived family of genres from on another. Amongst the classification methods employed, a random forest model was the most accurate, classifying 35.4% of the test dataset correctly, while a k-nearest neighbors model proved the least, successfully classifying only 28.6% of the test dataset.
+
+Investigation of the featurespace suggested that the descriptors employed to generate features from the raw audio files were not sufficient to separate the majority of the genres. Some overlap between genres as closely related as, for example, indie and alternative rock is likely unavoidable when attempting classification strictly from the raw audio, given the influences of time of release and origin of the artist in defining musical genres. These underlying uncertainties notwithstanding, the use of more information-rich descriptors, such as Mel-frequency cepstral coefficients or spectrograms, covering a larger, more diverse sample of the raw audio file would be the first step to take in further attempts to reach improved classification accuracies.
+
+# Methods
+
+## Data Set Construction
+
+```{r message = FALSE}
+# import required libaries
+require(dplyr)
+require(tuneR)
+require(seewave)
+require(doParallel)
+setwd("C:/Users/Jake/Desktop")
+set.seed(12481)
+```
+```{r import dataset}
+# import the metadata information, format a little
+music <- read.csv("music library.csv")
+music <- mutate_all(music, as.character)
+```
+
+```{r}
+### calculate descriptors on each song
+
+# start a parallel processing cluster
+cl <- makeCluster(3, type = "SOCK")
+registerDoParallel(cl)
+
+# loop through the rows of music
+# writing results to a csv file as we go to avoid memory overflow issues
+foreach (row = 1:dim(music)[1], .export = c("music"), .packages = c("tuneR", "seewave")
+         ) %dopar% {
+    # declare a vector to hold the descriptors  
+    descriptors <- c()
+
+    # store the song title - artist
+    # replace commas, colons, and semicolons with underscore
+    descriptors["song"] <- paste(music[row, "Title"], music[row, "Artist"], sep = " - ")
+    descriptors["song"] <- gsub(",", "_", descriptors["song"])
+    descriptors["song"] <- gsub(";", "_", descriptors["song"])
+    descriptors["song"] <- gsub(":", "_", descriptors["song"])
+    
+    # load the wave
+    # using mp3 function if mp3
+    if (substr(music[row, "Filename"], nchar(music[row, "Filename"]), 
+               nchar(music[row, "Filename"])) == "3") {
+      wave.file <- readMP3(paste(music[row, "Path"], music[row, "Filename"], sep = "")) 
+    }
+    # using flac function if flac
+    if (substr(music[row, "Filename"], nchar(music[row, "Filename"]), 
+               nchar(music[row, "Filename"])) == "c") {
+      # convert flac to wave
+      wav2flac(paste(music[row, "Path"], music[row, "Filename"], sep = ""), reverse = TRUE, 
+               path2exe = "C:/Users/Jake/Desktop/")
+      
+      # load wave, then delete the saved wave file
+      wave.file <- readWave(paste(music[row, "Path"], 
+                                  sub("flac", "wav", music[row, "Filename"]), sep = ""))
+      file.remove(paste(music[row, "Path"], 
+                        sub("flac", "wav", music[row, "Filename"]), sep = ""))
+    }
+    
+    # strip silence
+    wave.file <- noSilence(wave.file)
+    
+    # calculate length before truncating wave
+    descriptors["length"] <- length(wave.file)/wave.file@samp.rate
+    
+    # trim wave to middle 10s if greater than 10s
+    if (descriptors["length"] > 10) {
+      wave.trunc <- wave.file[(length(wave.file)/2 - 5*wave.file@samp.rate) : 
+                                (length(wave.file)/2 + 5*wave.file@samp.rate)]
+    } else {
+      wave.trunc <- wave.file
+    }
+    
+    # caclulate zero crossing rate for each second of the truncated wave
+    descriptors[paste("zcr", 1:10, sep = ".")] <- 
+      zcr(wave.trunc, f = wave.trunc@samp.rate, 
+          wl = wave.trunc@samp.rate, plot = FALSE)[, 2]
+    
+    # define 1s cut-points in terms of bits
+    increments <- seq(1, 10*wave.file@samp.rate, wave.file@samp.rate)
+    
+    # split wave.trunc into ten 1s segments
+    wave.intervals <- split(wave.trunc, increments)
+    
+    # calculate roughness and amplitude index
+    descriptors[paste("roughness", 1:10, sep = ".")] <- 
+      lapply(wave.intervals, function(x) {roughness(x@left)})
+    descriptors[paste("amplitude", 1:10, sep = ".")] <- 
+      lapply(wave.intervals, M)
+    
+    # calculate frequency spectrum properties
+    freq.props <- lapply(wave.intervals, function (x) 
+      {specprop(spec(x, f = wave.trunc@samp.rate, plot = FALSE))})
+    
+    # store Q25, Q75, centroid, skewness, kurtosis, flatness, and entropy
+    for (i in 1:10) {
+      descriptors[outer(
+        c("Q25", "Q75", "centroid", "skewness", "kurtosis", "flatness", "entropy"), 
+        i, FUN = paste, sep = ".")] <- 
+        freq.props[[i]][c("Q25", "Q75", "cent", "skewness", "kurtosis", "sfm", "sh")]
+    }
+    
+  # append row to csv file  
+  write.table(descriptors, file = "C:/Users/Jake/Desktop/music descriptors short.csv", 
+        append = TRUE, quote = FALSE, sep = ",", row.names = FALSE, col.names = FALSE)
+}
+    
+# stop parallel processing cluster
+stopCluster(cl)
+```
+
+```{r}
+### convert more specific genres into broader genre categories
+
+# declare a function to be applied
+regenre <- function (x) {
+  # define broader categories
+  pop <- c("Pop", "Power Pop", "R&B", "Siinger/Songwriter", "Singer/Songwriter", 
+           "Reggae", "Funk")
+  rock <- c("Blues Rock", "Britpop", "Classic Rock", "Comedy", "Country", "Folk Rock", 
+            "New Wave", "Pop Rock", "Rock", "Soundtrack", "Dub")
+  alternative.rock <- c("Alternative", "Alternative Rock", "Gothic Rock", "Grunge", 
+            "Hard Rock", "Noise Rock", "Numetal", "Stoner Rock", "Industrial")
+  indie.rock <- c("Downtempo", "Dream Pop", "Indie Rock", "Lo-fi", "Lo-Fi", 
+                  "Neo-psychedelia", "Neo-pyschedelia", "Neopsychedelia", "Noise Pop", 
+                  "Post-punk", "Shoegaze", "Slowcore")
+  progressive.rock <- c("Art Rock", "Math Rock", "Post-rock", "Progressive Metal", 
+                "Power Metal", "Psychedelic Rock", "Space Rock", "Ambient", "Neofolk")
+  metal <- c("Black Metal", "Death Metal", "Doom Metal", "Drone", "Folk Metal", 
+             "Grindcore", "Heavy Metal", "Melodic Death Metal", "Metalcore", 
+             "Stoner Metal", "Technical Death Metal", "Thrash", "Traditional Metal", 
+             "Traditional Metall")
+  punk <- c("Crossover", "Crust", "Emo", "Folk Punk", "Hardcore", "Hardcore Punk", 
+            "Pop Punk", "Post-hardcore", "Punk Rock", "Screamo", "Ska", "Sludge")
+  classical <- c("Classical", "Neoclassical")
+  electronic <- c("Dance", "Electronica", "Noise", "Trip-Hop")
+  hip.hop <- c("Hip-Hop", "Hip Hop")
+  
+  # check each genre in x against the broader genre definitions
+  if(x %in% pop) {
+    return("pop")
+  } else if (x %in% rock) {
+    return("rock")
+  } else if (x %in% alternative.rock) {
+    return("alternative rock")
+  } else if (x %in% indie.rock) {
+    return("indie rock")
+  } else if (x %in% progressive.rock) {
+    return("progressive rock")
+  } else if (x %in% metal) {
+    return("metal")
+  } else if (x %in% punk) {
+    return("punk")
+  } else if (x %in% classical) {
+    return("classical")
+  } else if (x %in% electronic) {
+    return("electronic")
+  } else if (x %in% hip.hop) {
+    return("hip-hop")
+  }
+}
+
+# apply function to the genres in the dataset
+music$Genre <- sapply(music$Genre, regenre)
+```
+
+## Model Tuning and Selection
+
+### Setup Chunks
+
+```{r message=FALSE, warning = FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+setwd("C:/Users/Jake/Desktop/Genre Classifier")
+set.seed(913535)
+
+### import required libraries
+require(dplyr)
+require(tidyr)
+require(ggplot2)
+require(doParallel)
+require(glmnet)
+require(kknn)
+require(randomForest)
+require(keras)
+```
+
+```{r function definitions}
+### function definitions
+
+# function flat.accuracy
+# takes two vectors prediction and reference
+# calculates the proportion of results in prediction that are equal to those in reference
+flat.accuracy <- function(prediction, reference) {
+  sum(prediction == reference) / length(reference)
+}
+
+# a simple wrapper for the abind function to allow it to work with foreach
+array.bind <- function(...) {abind::abind(..., along = 3)}
+```
+
+### Data Preparation
+
+```{r define training and test sets}
+### define training and test sets
+
+# set the seed here as well, in case this chunk is accidentally run
+set.seed(913535)
+
+# import the dataset
+music <- read.csv("final music descriptors.csv")
+
+# split into train and test sets
+train <- sample(1:dim(music)[1], ceiling(dim(music))[1]*.7)
+train.set <- music[train, ]
+test.set <- music[-train, ]
+
+# write training and test sets to disk
+save(train.set, file = "train.set")
+save(test.set, file = "test.set")
+```
+
+```{r create difference features}
+### create difference features
+
+# load the training set
+load("train.set")
+
+# remove a few observations for which the descriptor calculations appear to have errored
+train.set <- train.set[!(train.set$song %in% c("O - Coldplay", "F.O.D. - Green Day", 
+           "Living the Laws - Choking Victim", "M1A1 (Lil' Dub Chefin') - Gorillaz", 
+           "Call That Gone? - Paul Westerberg", "VCR Wheels - Tyler_ The Creator")), ]
+
+# generate a list of the parent names for the time-series features
+features <- unique(sub(pattern = "\\..*", replacement = "", 
+                       grep("\\..*", colnames(train.set), value = TRUE)))
+
+# reorder the features such that *.1 through *.10 are in order
+train.set <- train.set[, c("genre", "song", "album", "length", outer(1:10, features, 
+                                             function(x, y) {paste(y, x, sep = ".")}))]
+
+# for each pair of time-series features n and n+1, compute |n+1 - n|
+for (i in 1:length(features)) {
+  for (j in 1:9)
+    train.set[, paste(features[i], "dif", j, sep = ".")] <- 
+      abs(train.set[, paste(features[i], j+1, sep = ".")] - 
+            train.set[, paste(features[i], j, sep = ".")])
+}
+```
+
+```{r transform features}
+### transform features
+
+# log/root transform features with significant right skew
+train.set <- mutate_at(train.set, vars(one_of(c("length", 
+         outer(c("kurtosis", "Q25", "roughness", "skewness", "zcr"), 
+               1:10, paste, sep = ".")))), function(x) {log(x + .0001)})
+train.set <- mutate_at(train.set, vars(one_of(c("length", 
+         outer(c("amplitude.dif", "centroid.dif", "entropy.dif", "kurtosis.dif", 
+          "Q25.dif", "Q75.dif", "skewness.dif", "zcr.dif"), 1:9, paste, sep = ".")))), 
+         function(x) {(x^(1/4))})
+train.set <- mutate_at(train.set, vars(one_of(c("length", 
+         outer("flatness.dif", 1:9, paste, sep = ".")))), 
+         function(x) {(x^(1/2))})
+train.set <- mutate_at(train.set, vars(one_of(c("length", 
+         outer("roughness.dif", 1:9, paste, sep = ".")))), 
+         function(x) {(x^(1/10))})
+
+# power transform features with significant left skew
+train.set <- mutate_at(train.set, vars(one_of(
+         outer(c("entropy"), 1:10, paste, sep = "."))), 
+         function(x) {x^(20)})
+train.set <- mutate_at(train.set, vars(one_of(
+         outer(c("flatness"), 1:10, paste, sep = "."))), 
+         function(x) {x^(4)})
+train.set <- mutate_at(train.set, vars(one_of(
+         outer(c("Q75"), 1:10, paste, sep = "."))), 
+         function(x) {x^(3)})
+
+# scale all numeric features to N(0, 1) distribution
+# rebuild dataframe with scaled columns
+train.set <- cbind(select(train.set, song, album, genre), 
+                   sapply(select(train.set, -song, -album, - genre), scale))
+```
+
+```{r data formatting function}
+### data formatting function
+
+# this function duplicates the formatting and transformations done on the train set above
+# takes a dataframe x.df
+# returns a dataframe in the necessary form to make predictions
+format.as.train <- function (x.df) {
+  # generate a list of the parent names for the time-series features
+  features <- unique(sub(pattern = "\\..*", replacement = "", 
+                         grep("\\..*", colnames(x.df), value = TRUE)))
+
+  # reorder the features such that *.1 through *.10 are in order
+  x.reordered <- x.df[, c("genre", "song", "album", "length", 
+                outer(1:10, features, function(x, y) {paste(y, x, sep = ".")}))]
+  
+  # for each pair of time-series features n and n+1, compute |n+1 - n|
+  for (i in 1:length(features)) {
+    for (j in 1:9)
+      x.reordered[, paste(features[i], "dif", j, sep = ".")] <- 
+        abs(x.reordered[, paste(features[i], j+1, sep = ".")] - 
+              x.reordered[, paste(features[i], j, sep = ".")])
+  }
+  
+  # log/root transform features with significant right skew
+  x.reordered <- mutate_at(x.reordered, vars(one_of(c("length", 
+           outer(c("kurtosis", "Q25", "roughness", "skewness", "zcr"), 
+                 1:10, paste, sep = ".")))), function(x) {log(x + .0001)})
+  x.reordered <- mutate_at(x.reordered, vars(one_of(c("length", 
+           outer(c("amplitude.dif", "centroid.dif", "entropy.dif", "kurtosis.dif", 
+           "Q25.dif", "Q75.dif", "skewness.dif", "zcr.dif"), 1:9, paste, sep = ".")))), 
+           function(x) {(x^(1/4))})
+  x.reordered <- mutate_at(x.reordered, vars(one_of(c("length", 
+           outer("flatness.dif", 1:9, paste, sep = ".")))), 
+           function(x) {(x^(1/2))})
+  x.reordered <- mutate_at(x.reordered, vars(one_of(c("length", 
+           outer("roughness.dif", 1:9, paste, sep = ".")))), 
+           function(x) {(x^(1/10))})
+  
+  # power transform features with significant left skew
+  x.reordered <- mutate_at(x.reordered, vars(one_of(
+           outer(c("entropy"), 1:10, paste, sep = "."))), 
+           function(x) {x^(20)})
+  x.reordered <- mutate_at(x.reordered, vars(one_of(
+           outer(c("flatness"), 1:10, paste, sep = "."))), 
+           function(x) {x^(4)})
+  x.reordered <- mutate_at(x.reordered, vars(one_of(
+           outer(c("Q75"), 1:10, paste, sep = "."))), 
+           function(x) {x^(3)})
+  
+  # scale all numeric features to N(0, 1) distribution
+  # rebuild dataframe with scaled columns
+  x.reordered <- cbind(select(x.reordered, song, album, genre), 
+                       sapply(select(x.reordered, -song, -album, - genre), scale))
+  
+  # return the transformed/formatted dataframe
+  return(x.reordered)
+}
+```
+
+```{r feature histograms}
+### feature histograms
+
+# plot histograms of the individual features
+feature.histograms <- ggplot(data = gather(
+  train.set[c("length", grep("\\.2", colnames(train.set), value = TRUE))], key, value)) +
+  facet_wrap(~key, scale = "free", ncol = 6) + geom_histogram(aes(x = value), bins = 30) + 
+  ggtitle("Distributions of Transformed Features", "Training Set")
+```
+
+### Multinomial Regression
+
+```{r tune lasso multinomial regression}
+### tune lasso multinomial regression
+
+# set seed for reproducible cv group splitting
+set.seed(239913)
+
+# divide training set into ten cross-validation groups
+cv.groups <- caret::createFolds(train.set$genre, k = 10)
+
+# select values to try for alpha and lambda parameters
+alpha.values <- seq(0, 1, 0.05)
+lambda.values <- rev(c(seq(1, 10, 2) %o% exp(-20:5)))
+
+# declare a list to hold the training results
+glm.training.results <- list()
+
+# declare a parallel processing cluster
+cpu.cluster <- makeCluster(3, type = "SOCK")
+registerDoParallel(cpu.cluster)
+
+# loop through cross-validation groups
+for (i in 1:length(cv.groups)) {
+  # split out the current cv group from the rest of the training set
+  train.set.test <- train.set[cv.groups[[i]], ]
+  train.set.train <- train.set[-cv.groups[[i]], ]
+  
+  # loop through alpha values; glmnet function fits all lambda values in a single call
+  # foreach loop returns an array of predictions with 
+  # dimensions 'observation' x 'lambda' x 'alpha'
+  glm.training.results[[i]] <- foreach (j = 1:length(alpha.values), .combine = array.bind, 
+                                        .packages = c("glmnet", "dplyr")) %dopar% {
+    # fit a multinomial regression with elastic net penalization on the 9/10 set
+    intermediate.cv.model <- glmnet(x = as.matrix(
+      select(train.set.train, -genre, -song, -album)), 
+                    y = train.set.train$genre, family = "multinomial", 
+                    alpha = alpha.values[j], lambda = lambda.values, standardize = FALSE)
+
+    # predict with the fitted model on the 1/10 set
+    predict(intermediate.cv.model, as.matrix(
+      select(train.set.test, -genre, -song, -album)), type = "class")
+  }
+}
+
+# end parallel processing
+stopCluster(cpu.cluster)
+
+# save the tuning results
+save(glm.training.results, file = "glm.training.results")
+```
+
+```{r multinomial regression results processing}
+### multinomial regression results processing
+
+# format the cross-validation results into a single dataframe
+# declare an empty array to hold the compiled predictions
+glm.training.results.compiled <- 
+  array(dim = c(dim(train.set)[1], length(lambda.values), length(alpha.values)))
+
+# convert the list of predictions seperated by cv group into a single array
+for (i in 1:length(glm.training.results)) {
+  for (j in 1:length(lambda.values)) {
+    for (k in 1:length(alpha.values)) {
+      glm.training.results.compiled[cv.groups[[i]], j, k] <- 
+            glm.training.results[[i]][, j, k]
+    }
+  }
+}
+
+# compute classification accuracy for each condition
+glm.tuning.scores <- apply(glm.training.results.compiled, c(2, 3), FUN = function(x) 
+  {flat.accuracy(x, ref = train.set$genre)})
+
+# bind the scores into a dataframe with the lambda and alpha values
+glm.tuning.scores <- cbind(expand.grid(lambda.values, alpha.values), c(glm.tuning.scores))
+colnames(glm.tuning.scores) <- c("lambda", "alpha", "score")
+
+# plot a heatmap of misclassification score as a function of lambda and alpha
+ggplot(glm.tuning.scores, aes(log(lambda), alpha, col = score)) + 
+  geom_point(shape = 15, size = 4) + ggtitle("LASSO Tuning Parameters") +
+  scale_y_continuous("alpha") + scale_x_continuous("log(lambda)")
+```
+
+```{r optimized multinomial regression model}
+### optimized multinomial regression model
+
+# find the best performing parameter set
+best.glm.parameters <- 
+  glm.tuning.scores[which(glm.tuning.scores$score == max(glm.tuning.scores$score)), ]
+
+# calculate the standard error amongst all fitted models
+se <- sd(glm.tuning.scores$score) / sqrt(length(glm.tuning.scores$score))
+
+# find parameter sets with scores within one se of the best performing
+# from these find the parameter sets with the maximum lambda penalty
+# finally, from these select a random parameter set from those with the highest score
+optimal.glm.parameters <- glm.tuning.scores[
+  which(glm.tuning.scores$score > as.numeric(best.glm.parameters[3] - se)), ]
+optimal.glm.parameters <- optimal.glm.parameters[
+  which(optimal.glm.parameters$lambda == max(optimal.glm.parameters$lambda)), ]
+optimal.glm.parameters <- optimal.glm.parameters[sample(which(
+  optimal.glm.parameters$score == max(optimal.glm.parameters$score)), 1), ]
+
+# train a model using the optimized parameters
+optimal.glm <- glmnet(x = as.matrix(select(train.set, -genre, -song, -album)), 
+              y = train.set$genre, family = "multinomial", lambda = lambda.values, 
+              alpha = optimal.glm.parameters$alpha, standardize = FALSE)
+```
+
+```{r multinomial regression test set predictions}
+### multinomial regression test set predictions
+
+# load the test set
+load("test.set")
+
+# format the test set as the train set
+test.set <- format.as.train(test.set)
+
+# predict classes for the test set
+glm.predictions <- predict(optimal.glm, as.matrix(select(test.set, -genre, -song, -album)), 
+                           s = optimal.glm.parameters$lambda, type = "class")
+
+# calculate the flat accuracy
+flat.accuracy(glm.predictions, test.set$genre)
+
+# tabulate a confusion matrix (predicted versus actual)
+table(glm.predictions, test.set$genre)
+
+# clear the workspace, keeping the training set and functions
+rm(list = setdiff(ls(), c("train.set", "array.bind", "flat.accuracy", "format.as.train")))
+```
+
+### KNN Classifier
+
+```{r tune knn classifier}
+### tune knn classifier
+
+# select a few kernals, k-values, and distance parameters to try
+kernels <- c("rectangular", "triangular", "epanechnikov", "biweight", "triweight", "cos", 
+             "inv", "gaussian", "rank", "optimal")
+k.values <- seq(1,21,2)
+distances <- c(seq(0.25, 1, 0.25), seq(2, 10, 1))
+
+# declare a parallel processing cluster
+cpu.cluster <- makeCluster(3, type = "SOCK")
+registerDoParallel(cpu.cluster)
+
+# train a knn model w/ LOO cross-validation for each of the kernal/k/distance combinations
+knn.training.results <- foreach(i = 1:length(distances), .packages = c("kknn", "dplyr")
+  ) %dopar% {
+  set.seed(23945)
+  train.kknn(genre ~ ., data = select(train.set, -song, -album), 
+             distance = distances[i], ks = k.values, kernel = kernels)
+}
+
+# stop parallel sequence
+stopCluster(cpu.cluster)
+
+# save the tuning results
+save(knn.training.results, file = "knn.training.results")
+```
+```{r knn tune results}
+### knn tune results
+
+# loop through the results, calculating the classification score for each condition
+# "flatten" the resulting matrix into a vector
+knn.tuning.scores <- as.vector(sapply(knn.training.results, function(x) 
+  {sapply(x$fitted.values, function(y) {flat.accuracy(y, ref = train.set$genre)})}))
+
+# bind the scores into a dataframe with the corresponding parameter values
+knn.tuning.scores <- cbind(expand.grid(distances, k.values, kernels), knn.tuning.scores)
+colnames(knn.tuning.scores) <- c("distance", "k", "kernel", "score")
+
+# plot a heatmap of classification score as a function of kernel and k
+# facet by Minkowski parameter
+ggplot(knn.tuning.scores, aes(k, kernel, fill = score)) + geom_raster() + 
+  scale_y_discrete("kernel") + scale_x_continuous("k", breaks = seq(1, 101, 10)) + 
+  facet_wrap(~distance) + ggtitle("KNN Tuning Parameters")
+```
+```{r optimized knn model}
+### optimized knn model
+
+# find the best performing parameter set
+best.knn.parameters <- 
+  knn.tuning.scores[which(knn.tuning.scores$score == max(knn.tuning.scores$score)), ]
+
+# calculate the standard error amongst all fitted models
+se <- sd(knn.tuning.scores$score) / sqrt(length(knn.tuning.scores$score))
+
+# find parameter sets with scores within one se of the best performing
+# from these find the parameter sets with the maximum k-value
+# finally, from these select a random parameter set from those with the highest score
+optimal.knn.parameters <- knn.tuning.scores[
+  which(knn.tuning.scores$score > as.numeric(best.knn.parameters[4] - se)), ]
+optimal.knn.parameters <- optimal.knn.parameters[
+  which(optimal.knn.parameters$k == max(optimal.knn.parameters$k)), ]
+optimal.knn.parameters <- optimal.knn.parameters[sample(
+  which(optimal.knn.parameters$score == max(optimal.knn.parameters$score)), 1), ]
+
+# train a knn model using the optimized parameters
+optimal.knn <- train.kknn(genre ~ ., data = select(train.set, -song, -album), 
+              distance = optimal.knn.parameters$distance, ks = optimal.knn.parameters$k, 
+              kernel = as.character(optimal.knn.parameters$kernel))
+
+# save the optimized model
+save(optimal.knn, file = "optimal.knn")
+```
+
+```{r knn test set predictions}
+### knn test set predictions
+
+# load the test set
+load("test.set")
+
+# format the test set as the train set
+test.set <- format.as.train(test.set)
+
+# predict classes for the test set
+knn.predictions <- predict(optimal.knn, select(test.set, -genre, -song, -album), 
+                           s = optimal.glm.parameters[[1]])
+
+# calculate the flat accuracy
+flat.accuracy(knn.predictions, test.set$genre)
+
+# tabulate a confusion matrix (predicted versus actual)
+table(knn.predictions, test.set$genre)
+
+# clear the workspace, keeping the training set and functions
+rm(list = setdiff(ls(), c("train.set", "array.bind", "flat.accuracy", "format.as.train")))
+```
+
+### Random Forest Classifier
+
+```{r tune random forest - number of trees}
+### tune random forest - number of trees
+
+# identify a reasonable number of trees to use while tuning
+# select B values to try
+b.values <- c(seq(100, 1000, 100), 1500, 2000)
+
+# declare a dataframe to hold predicted values
+b.tuning.scores <- cbind(b.values, rep(NA, length(b.values)))
+colnames(b.tuning.scores) <- c("B", "score")
+
+# train a random forest on the training set using each value of B
+for (i in 1:length(b.values)) {
+  # set seed to ensure reprocible variable selection
+  set.seed(38245)
+  
+  # train a random forest
+  intermediate.forest <- randomForest(genre ~ ., data = select(train.set, -song, -album), 
+                                      ntree = b.values[i], strata = train.set$genre)
+  
+  # calculate the classification score for the out-of-bag predictions
+  b.tuning.scores[i, 2] <- flat.accuracy(intermediate.forest$predicted, train.set$genre)
+}
+
+# save the tuning scores
+save(b.tuning.scores, file = "b.tuning.scores")
+
+# plot classification score versus B
+ggplot(data = as.data.frame(b.tuning.scores), aes(x = B, y = score)) + geom_point()
+```
+
+Will tune remaining parameters with B = 600 as a compromise between minimized classification error and memory limitations.
+
+```{r tune random forest}
+### tune random forest
+
+# tune the number of variables per tree and size of the terminal nodes
+# select values to try for m and node size
+m.values <- seq(20, 180, 10)
+nodes <- seq(1, 100, 10)
+rf.tuning.scores <- cbind(expand.grid(m.values, nodes), 
+                          rep(NA, dim(expand.grid(m.values, nodes))[1]))
+colnames(rf.tuning.scores) <- c("m", "nodes", "score")
+
+# declare a parallel processing cluster
+cl <- makeCluster(3, type = "SOCK")
+registerDoParallel(cl)
+
+# build random forests from the training set using each of the parameter combinations
+rf.tuning.scores$score <- foreach (i = 1:dim(rf.tuning.scores)[1], .combine = c, 
+         .packages = c("randomForest", "dplyr")) %dopar% {
+  # set seed to ensure reproducible variable selection
+  set.seed(38245)
+  
+  # train a random forest
+  intermediate.forest <- randomForest(genre ~ ., data = select(train.set, -song, -album), 
+                  strata = train.set$genre, ntree = 600, mtry = rf.tuning.scores[i, 1], 
+                  nodesize = rf.tuning.scores[i, 2])
+  
+  # return the classification score for the out-of-bag predictions
+  flat.accuracy(intermediate.forest$predicted, train.set$genre)
+}
+
+# end parallel work
+stopCluster(cl)
+
+# save the tuning scores
+save(rf.tuning.scores, file = "rf.tuning.scores")
+
+# plot a heatmap of classification score as a function of variables per tree and node size
+ggplot(rf.tuning.scores, aes(m, nodes, fill = score)) + geom_raster() + 
+  scale_y_discrete("nodes") + scale_x_continuous("m") + 
+  ggtitle("Random Forest Tuning Parameters")
+```
+
+```{r random forest tune results}
+### random forest tune results
+
+# find determine the best performing parameter set
+best.rf.parameters <- rf.tuning.scores[
+  which(rf.tuning.scores$score == max(rf.tuning.scores$score)), ]
+
+# calculate the standard error amongst all fitted models
+se <- sd(rf.tuning.scores$score) / sqrt(length(rf.tuning.scores$score))
+
+# find parameter sets with scores within one se of the best performing
+# from these find the parameter sets with the minimal m parameter
+# finally, from these select a random parameter set from those with the highest score
+optimal.rf.parameters <- rf.tuning.scores[
+  which(rf.tuning.scores$score > as.numeric(best.rf.parameters$score - se)), ]
+optimal.rf.parameters <- optimal.rf.parameters[
+  which(optimal.rf.parameters$m == min(optimal.rf.parameters$m)), ]
+optimal.rf.parameters <- optimal.rf.parameters[sample(
+  which(optimal.rf.parameters$score == max(optimal.rf.parameters$score)), 1), ]
+
+# train a random forest using the optimized parameters
+optimal.rf <- randomForest(genre ~ ., data = select(train.set, -song, -album), 
+           strata = train.set$genre, ntree = 2000, mtry = optimal.rf.parameters$m, 
+           nodesize = optimal.rf.parameters$nodes)
+
+# save the optimized model
+save(optimal.rf, file = "optimal.rf")
+```
+
+```{r random forest test set predictions}
+### random forest test set predictions
+
+# load the test set
+load("test.set")
+
+# format the test set as the train set
+test.set <- format.as.train(test.set)
+
+# predict classes for the test set
+rf.predictions <- predict(optimal.rf, select(test.set, -genre, -song, -album))
+
+# calculate the flat accuracy
+flat.accuracy(rf.predictions, test.set$genre)
+
+# tabulate a confusion matrix (predicted versus actual)
+table(rf.predictions, test.set$genre)
+
+# clear the workspace, keeping the training set and functions
+rm(list = setdiff(ls(), c("train.set", "array.bind", "flat.accuracy", "format.as.train")))
+```
+
+### Neural Network
+
+```{r neural network training}
+### neural network training
+
+# convert the training set into the matrix format required by keras
+train.set.X <- as.matrix(select(train.set, -genre, -song, -album))
+train.set.Y <- to_categorical(as.numeric(train.set$genre))
+
+# define the model
+model <- keras_model_sequential()
+model %>%
+  layer_dense(units = 50, activation = "relu", input_shape = 191) %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = 50, activation = "relu") %>%
+  layer_dropout(rate = 0.5) %>%
+  layer_dense(units = dim(train.set.Y)[2], activation = "softmax")
+  
+# compile the model
+compile(model, loss = "categorical_crossentropy", optimizer = optimizer_adadelta(), 
+        metrics = "accuracy")
+  
+# fit the model
+nnet.training <- fit(model, x = train.set.X, y = train.set.Y, epochs = 80, 
+                     batch_size = 250, validation_split = 0.2, verbose = 1)
+```
+
+```{r neural network test set predictions}
+### neural network test set predictions
+
+# load the test set
+load("test.set")
+
+# format the test set as the train set
+test.set <- format.as.train(test.set)
+
+# build a matrix from the test set features
+test.set.X <- as.matrix(select(test.set, -genre, -song, -album))
+
+# predict classes for the observations in the test set
+nn.predictions <- predict_classes(model, test.set.X)
+
+# calculate the flat accuracy
+flat.accuracy(nn.predictions, as.numeric(test.set$genre))
+
+# tabulate a confusion matrix (predicted versus actual)
+table(levels(test.set$genre)[nn.predictions], test.set$genre)
+```
+
