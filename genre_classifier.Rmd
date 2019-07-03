@@ -10,7 +10,6 @@ latex_engine: xelatex
 
 ```{r setup, message=FALSE, warning = FALSE}
 knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
-setwd("C:/Users/Jake/Desktop/Genre Classifier")
 set.seed(913535)
 
 # import required libraries
@@ -43,7 +42,7 @@ array.bind <- function(...) {abind::abind(..., along = 3)}
 set.seed(913535)
 
 # import the dataset
-music <- read.csv("final music descriptors.csv")
+music <- read.csv("final_music_descriptors.csv")
 
 # split into train and test sets
 train <- sample(1:dim(music)[1], ceiling(dim(music))[1]*.7)
@@ -51,13 +50,13 @@ train.set <- music[train, ]
 test.set <- music[-train, ]
 
 # write training and test sets to disk
-save(train.set, file = "train.set")
-save(test.set, file = "test.set")
+save(train.set, file = "Objects/train.set")
+save(test.set, file = "Objects/test.set")
 ```
 
 ```{r create difference features}
 # load the training set
-load("train.set")
+load("Objects/train.set")
 
 # remove a few observations for which the descriptor calculations appear to have thrown errors
 train.set <- train.set[!(train.set$song %in% c("O - Coldplay", "F.O.D. - Green Day", "Living the Laws - Choking Victim", "M1A1 (Lil' Dub Chefin') - Gorillaz", "Call That Gone? - Paul Westerberg", "VCR Wheels - Tyler_ The Creator")), ]
@@ -209,7 +208,7 @@ for (i in 1:length(cv.groups)) {
 stopCluster(cpu.cluster)
 
 # save the tuning results
-save(glm.training.results, file = "glm.training.results")
+save(glm.training.results, file = "Objects/glm.training.results")
 ```
 ```{r multinomial regression results processing}
 # format the cross-validation results into a single dataframe
@@ -258,7 +257,7 @@ optimal.glm <- glmnet(x = as.matrix(select(train.set, -genre, -song, -album)), y
 
 ```{r multinomial regression test set predictions}
 # load the test set
-load("test.set")
+load("Objects/test.set")
 
 # format the test set as the train set
 test.set <- format.as.train(test.set)
@@ -299,7 +298,7 @@ knn.training.results <- foreach(i = 1:length(distances), .packages = c("kknn", "
 stopCluster(cpu.cluster)
 
 # save the tuning results
-save(knn.training.results, file = "knn.training.results")
+save(knn.training.results, file = "Objects/knn.training.results")
 ```
 ```{r knn tune results}
 # loop through the training results, calculating the classification score for each condition
@@ -332,12 +331,12 @@ optimal.knn.parameters <- optimal.knn.parameters[sample(which(optimal.knn.parame
 optimal.knn <- train.kknn(genre ~ ., data = select(train.set, -song, -album), distance = optimal.knn.parameters$distance, ks = optimal.knn.parameters$k, kernel = as.character(optimal.knn.parameters$kernel))
 
 # save the optimized model
-save(optimal.knn, file = "optimal.knn")
+save(optimal.knn, file = "Objects/optimal.knn")
 ```
 
 ```{r knn test set predictions}
 # load the test set
-load("test.set")
+load("Objects/test.set")
 
 # format the test set as the train set
 test.set <- format.as.train(test.set)
@@ -379,7 +378,7 @@ for (i in 1:length(b.values)) {
 }
 
 # save the tuning scores
-save(b.tuning.scores, file = "b.tuning.scores")
+save(b.tuning.scores, file = "Objects/b.tuning.scores")
 
 # plot classification score versus B
 ggplot(data = as.data.frame(b.tuning.scores), aes(x = B, y = score)) + geom_point()
@@ -415,7 +414,7 @@ rf.tuning.scores$score <- foreach (i = 1:dim(rf.tuning.scores)[1], .combine = c,
 stopCluster(cl)
 
 # save the tuning scores
-save(rf.tuning.scores, file = "rf.tuning.scores")
+save(rf.tuning.scores, file = "Objects/rf.tuning.scores")
 
 # plot a heatmap of classification score as a function of variables per tree and node size
 ggplot(rf.tuning.scores, aes(m, nodes, fill = score)) + geom_raster() + scale_y_discrete("nodes") + scale_x_continuous("m") + ggtitle("Random Forest Tuning Parameters")
@@ -439,12 +438,12 @@ optimal.rf.parameters <- optimal.rf.parameters[sample(which(optimal.rf.parameter
 optimal.rf <- randomForest(genre ~ ., data = select(train.set, -song, -album), strata = train.set$genre, ntree = 2000, mtry = optimal.rf.parameters$m, nodesize = optimal.rf.parameters$nodes)
 
 # save the optimized model
-save(optimal.rf, file = "optimal.rf")
+save(optimal.rf, file = "Objects/optimal.rf")
 ```
 
 ```{r random forest test set predictions}
 # load the test set
-load("test.set")
+load("Objects/test.set")
 
 # format the test set as the train set
 test.set <- format.as.train(test.set)
@@ -487,7 +486,7 @@ nnet.training <- fit(model, x = train.set.X, y = train.set.Y, epochs = 80, batch
 
 ```{r neural network test set predictions}
 # load the test set
-load("test.set")
+load("Objects/test.set")
 
 # format the test set as the train set
 test.set <- format.as.train(test.set)
@@ -505,12 +504,15 @@ flat.accuracy(nn.predictions, as.numeric(test.set$genre))
 table(levels(test.set$genre)[nn.predictions], test.set$genre)
 ```
 
-```{r}
+```{r genres by album}
+# generate a new dataframe containing the album, observed genre, and predicted genre
 by.album <- data.frame(cbind(test.set$album, test.set$genre, nn.predictions))
 colnames(by.album) <- c("album", "genre", "prediction")
 
+# tabulate the "consensus" genre for each album
 by.album <- by.album %>% group_by(album) %>% summarise(album.pred = which.max(tabulate(prediction)), album.genre = which.max(tabulate(genre)))
 
+# calculate the proportion of albums predicted correctly
 sum(by.album$album.pred == by.album$album.genre) / dim(by.album)[1]
 ```
 
