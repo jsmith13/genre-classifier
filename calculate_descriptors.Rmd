@@ -12,6 +12,9 @@ require(seewave)
 require(doParallel)
 
 set.seed(12481)
+
+# path to FLAC encoder on local machine
+flac.path <- "C:/Users/Jake/Desktop"
 ```
 
 ```{r import dataset}
@@ -52,7 +55,7 @@ foreach (row = 1:dim(music)[1], .export = c("music"), .packages = c("tuneR", "se
                nchar(music[row, "Filename"])) == "c") {
       # convert flac to wave
       wav2flac(paste(music[row, "Path"], music[row, "Filename"], sep = ""), reverse = TRUE, 
-               path2exe = "C:/Users/Jake/Desktop/")
+               path2exe = flac.path)
       
       # load wave, then delete the saved wave file
       wave.file <- readWave(paste(music[row, "Path"], 
