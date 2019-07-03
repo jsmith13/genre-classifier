@@ -1,0 +1,114 @@
+---
+title: "Calculate Descriptors"
+author: "Jake Smith "
+date: "5/11/2019"
+---
+
+```{r message = FALSE}
+# import required libaries
+require(dplyr)
+require(tuneR)
+require(seewave)
+require(doParallel)
+
+set.seed(12481)
+```
+
+```{r import dataset}
+# import the metadata information, format a little
+music <- read.csv("music_library.csv")
+music <- mutate_all(music, as.character)
+```
+
+```{r}
+### calculate descriptors on each song
+
+# start a parallel processing cluster
+cl <- makeCluster(3, type = "SOCK")
+registerDoParallel(cl)
+
+# loop through the rows of music
+# writing results to a csv file as we go to avoid memory overflow issues
+foreach (row = 1:dim(music)[1], .export = c("music"), .packages = c("tuneR", "seewave")
+         ) %dopar% {
+    # declare a vector to hold the descriptors  
+    descriptors <- c()
+
+    # store the song title - artist
+    # replace commas, colons, and semicolons with underscore
+    descriptors["song"] <- paste(music[row, "Title"], music[row, "Artist"], sep = " - ")
+    descriptors["song"] <- gsub(",", "_", descriptors["song"])
+    descriptors["song"] <- gsub(";", "_", descriptors["song"])
+    descriptors["song"] <- gsub(":", "_", descriptors["song"])
+    
+    # load the wave
+    # using mp3 function if mp3
+    if (substr(music[row, "Filename"], nchar(music[row, "Filename"]), 
+               nchar(music[row, "Filename"])) == "3") {
+      wave.file <- readMP3(paste(music[row, "Path"], music[row, "Filename"], sep = "")) 
+    }
+    # using flac function if flac
+    if (substr(music[row, "Filename"], nchar(music[row, "Filename"]), 
+               nchar(music[row, "Filename"])) == "c") {
+      # convert flac to wave
+      wav2flac(paste(music[row, "Path"], music[row, "Filename"], sep = ""), reverse = TRUE, 
+               path2exe = "C:/Users/Jake/Desktop/")
+      
+      # load wave, then delete the saved wave file
+      wave.file <- readWave(paste(music[row, "Path"], 
+                                  sub("flac", "wav", music[row, "Filename"]), sep = ""))
+      file.remove(paste(music[row, "Path"], 
+                        sub("flac", "wav", music[row, "Filename"]), sep = ""))
+    }
+    
+    # strip silence
+    wave.file <- noSilence(wave.file)
+    
+    # calculate length before truncating wave
+    descriptors["length"] <- length(wave.file)/wave.file@samp.rate
+    
+    # trim wave to middle 10s if greater than 10s
+    if (descriptors["length"] > 10) {
+      wave.trunc <- wave.file[(length(wave.file)/2 - 5*wave.file@samp.rate) : 
+                                (length(wave.file)/2 + 5*wave.file@samp.rate)]
+    } else {
+      wave.trunc <- wave.file
+    }
+    
+    # caclulate zero crossing rate for each second of the truncated wave
+    descriptors[paste("zcr", 1:10, sep = ".")] <- 
+      zcr(wave.trunc, f = wave.trunc@samp.rate, 
+          wl = wave.trunc@samp.rate, plot = FALSE)[, 2]
+    
+    # define 1s cut-points in terms of bits
+    increments <- seq(1, 10*wave.file@samp.rate, wave.file@samp.rate)
+    
+    # split wave.trunc into ten 1s segments
+    wave.intervals <- split(wave.trunc, increments)
+    
+    # calculate roughness and amplitude index
+    descriptors[paste("roughness", 1:10, sep = ".")] <- 
+      lapply(wave.intervals, function(x) {roughness(x@left)})
+    descriptors[paste("amplitude", 1:10, sep = ".")] <- 
+      lapply(wave.intervals, M)
+    
+    # calculate frequency spectrum properties
+    freq.props <- lapply(wave.intervals, function (x) 
+      {specprop(spec(x, f = wave.trunc@samp.rate, plot = FALSE))})
+    
+    # store Q25, Q75, centroid, skewness, kurtosis, flatness, and entropy
+    for (i in 1:10) {
+      descriptors[outer(
+        c("Q25", "Q75", "centroid", "skewness", "kurtosis", "flatness", "entropy"), 
+        i, FUN = paste, sep = ".")] <- 
+        freq.props[[i]][c("Q25", "Q75", "cent", "skewness", "kurtosis", "sfm", "sh")]
+    }
+    
+  # append row to csv file  
+  write.table(descriptors, file = "music_descriptors_short.csv", 
+        append = TRUE, quote = FALSE, sep = ",", row.names = FALSE, col.names = FALSE)
+}
+    
+# stop parallel processing cluster
+stopCluster(cl)
+```
