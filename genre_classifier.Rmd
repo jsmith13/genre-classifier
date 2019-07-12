@@ -281,8 +281,8 @@ rm(list = setdiff(ls(), c("train.set", "array.bind", "flat.accuracy", "format.as
 ```{r tune knn classifier}
 # select a few kernals, k-values, and distance parameters to try
 kernels <- c("rectangular", "triangular", "epanechnikov", "biweight", "triweight", "cos", "inv", "gaussian", "rank", "optimal")
-k.values <- seq(1,21,2)
-distances <- c(seq(0.25, 1, 0.25), seq(2, 10, 1))
+k.values <- seq(1,101,5)
+distances <- c(seq(0.5, 1, 0.25), seq(2, 4, 1))
 
 # declare a parallel processing cluster
 cpu.cluster <- makeCluster(3, type = "SOCK")
@@ -303,15 +303,16 @@ save(knn.training.results, file = "Objects/knn.training.results")
 ```{r knn tune results}
 # loop through the training results, calculating the classification score for each condition
 # "flatten" the resulting matrix into a vector
+# this "orders" the parameters k, kernels, distance
 knn.tuning.scores <- as.vector(sapply(knn.training.results, function(x) {sapply(x$fitted.values, function(y) {flat.accuracy(y, ref = train.set$genre)})}))
 
 # bind the scores into a dataframe with the corresponding parameter values
-knn.tuning.scores <- cbind(expand.grid(distances, k.values, kernels), knn.tuning.scores)
-colnames(knn.tuning.scores) <- c("distance", "k", "kernel", "score")
+knn.tuning.scores <- cbind(expand.grid(k.values, kernels, distances), knn.tuning.scores)
+colnames(knn.tuning.scores) <- c("k", "kernel", "distance", "score")
 
 # plot a heatmap of classification score as a function of kernel and k, facet by Minkowski parameter
-ggplot(knn.tuning.scores, aes(k, kernel, fill = score)) + geom_raster() + scale_y_discrete("kernel") +
-  scale_x_continuous("k", breaks = seq(1, 101, 10)) + facet_wrap(~distance) + ggtitle("KNN Tuning Parameters")
+ggplot(knn.tuning.scores, aes(k, distance, fill = score)) + geom_raster() + scale_y_discrete("distance") +
+  scale_x_continuous("k", breaks = seq(1, 101, 10)) + facet_wrap(~kernel) + ggtitle("KNN Tuning Parameters")
 ```
 ```{r optimized knn model}
 # find determine the best performing parameter set
