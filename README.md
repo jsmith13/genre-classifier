@@ -1,29 +1,31 @@
-# Musical Genre Classification
+# Genre Classification
+Building a predictive model for classification of audio files into musical genres.
+http://bicologie.com/jakeallensmith/projects/genre-classification/
 
-## Goal 
-Produce a predictive model for classifying audio files into musical genres.
+## Objectives
+- Produce a predictive model for classifying audio files into musical genres.
 
 ## Dataset
-A collection of waveform descriptors calculated on my personal music library.
+- A collection of waveform descriptors calculated on my personal music library.
 
 ## Contents
-* calculate_descriptors.Rmd  
+- calculate_descriptors.Rmd  
 Calculation of waveform descriptors using functions in the *tuneR* and *seewave* packages.
 
-* final_music_descriptors.csv  
+- final_music_descriptors.csv  
 The dataset used in the final analysis.
 
-* genre_classifier.Rmd  
+- genre_classifier.Rmd  
 Exploratory analysis, cleaning, and transformation of dataset. Tuning and testing of predictive models.
 
-* less_features.Rmd  
+- less_features.Rmd  
 A multinomial regression model with elasticnet penalties using a truncated dataset.
 
-* music_descriptors_short.csv  
+- music_descriptors_short.csv  
 The initially calculated waveform descriptors.
 
-* music_library.csv  
+- music_library.csv  
 A table of metadata and file paths pulled from my music collection.
 
-* writeup.Rmd  
+- writeup.Rmd  
 A final report.
