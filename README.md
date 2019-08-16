@@ -1,5 +1,5 @@
 # Genre Classification
-Building a predictive model for classification of audio files into musical genres.
+Building a predictive model for classification of audio files into musical genres.  
 http://jakeallensmith.com/projects/genre-classification/
 
 ## Objectives
